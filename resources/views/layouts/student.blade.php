@@ -7,6 +7,7 @@
     <title>Serenitech | PSU</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
 
     <!-- CSRF Token -->
@@ -70,6 +71,33 @@
     <main class="py-4">
         @yield('content')
     </main>
+
+
+    @if(session('success'))
+<script>
+    Swal.fire({
+        icon: 'success',
+        title: 'Booking Submitted',
+        text: '{{ session('success') }}',
+        confirmButtonColor: '#28a745'
+    });
+</script>
+@endif
+
+@if ($errors->any())
+<script>
+    let errorMessages = `{!! implode('\n', $errors->all()) !!}`;
+    Swal.fire({
+        icon: 'error',
+        title: 'Validation Error',
+        text: errorMessages,
+        confirmButtonColor: '#dc3545'
+    });
+</script>
+@endif
+
 </body>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+
 </html>
