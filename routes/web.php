@@ -11,6 +11,23 @@ use App\Http\Controllers\Admin\BookingController;
 use App\Http\Controllers\Admin\VideoSessionController;
 use App\Http\Controllers\Student\ScheduleController;
 
+//BY BOK#1
+use App\Http\Controllers\PostController;
+
+Route::middleware(['auth', 'admin'])->group(function () {
+    Route::get('/admin/posts', [PostController::class, 'index'])->name('admin.posts');
+    Route::get('/admin/posts/create', [PostController::class, 'create'])->name('admin.posts.create');
+    Route::post('/admin/posts', [PostController::class, 'store'])->name('admin.posts.store');
+});
+
+Route::middleware(['auth'])->group(function () {
+    Route::get('/announcements', [PostController::class, 'showAnnouncements'])->name('announcements');
+});
+
+
+
+
+
 /*
 |--------------------------------------------------------------------------
 | 🔐 Public Route: Login Page (Root)
