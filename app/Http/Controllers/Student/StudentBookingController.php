@@ -22,7 +22,7 @@ class StudentBookingController extends Controller
         return view('student.booking.form', compact('counselor'));
     }
 
-    public function store(Request $request)
+   public function store(Request $request)
 {
     $request->validate([
         'course' => 'required',
@@ -38,9 +38,14 @@ class StudentBookingController extends Controller
         'emergency_occupation' => 'required',
         'reason' => 'required',
         'preferred_time' => 'required|date',
-        'preference' => 'required|in:online,face-to-face', // ✅ add this
+        'preference' => 'required|in:online,face-to-face',
     ]);
 
+    $preferred = \Carbon\Carbon::parse($request->preferred_time);
+    $date = $preferred->toDateString();
+    $time = $preferred->format('H:i:s');
+
+    // ✅ Check existing bookings
     $existingBooking = BookingRequest::where('counselor_id', $request->counselor_id)
         ->where('preferred_time', $request->preferred_time)
         ->whereIn('status', ['pending', 'approved'])
@@ -52,6 +57,39 @@ class StudentBookingController extends Controller
             ->withInput();
     }
 
+    // ✅ Check one-time events (CalendarEvent)
+    $eventConflict = \App\Models\CalendarEvent::where('user_id', $request->counselor_id)
+        ->whereDate('date', $date)
+        ->where(function ($q) use ($time) {
+            $q->where(function ($sub) use ($time) {
+                $sub->where('start_time', '<=', $time)
+                    ->where('end_time', '>=', $time);
+            })
+            ->orWhereNull('start_time'); // whole-day unavailable
+        })
+        ->exists();
+
+    if ($eventConflict) {
+        return redirect()->back()
+            ->withErrors(['preferred_time' => 'This time conflicts with the counselor’s schedule (event/unavailable).'])
+            ->withInput();
+    }
+
+    // ✅ Check recurring tasks (WeeklySchedule)
+    $dayOfWeek = $preferred->format('l'); // e.g. "Monday"
+    $recurringConflict = \App\Models\WeeklySchedule::where('user_id', $request->counselor_id)
+        ->where('day_of_week', $dayOfWeek)
+        ->where('start_time', '<=', $time)
+        ->where('end_time', '>=', $time)
+        ->exists();
+
+    if ($recurringConflict) {
+        return redirect()->back()
+            ->withErrors(['preferred_time' => 'This time conflicts with the counselor’s recurring schedule.'])
+            ->withInput();
+    }
+
+    // ✅ If all clear -> save booking
     BookingRequest::create([
         'student_id' => auth()->id(),
         'counselor_id' => $request->counselor_id,
@@ -67,7 +105,7 @@ class StudentBookingController extends Controller
         'emergency_contact' => $request->emergency_contact,
         'emergency_occupation' => $request->emergency_occupation,
         'reason' => $request->reason,
-        'preference' => $request->preference, // ✅ add this
+        'preference' => $request->preference,
         'preferred_time' => $request->preferred_time,
         'status' => 'pending',
     ]);
