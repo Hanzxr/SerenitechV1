@@ -22,6 +22,10 @@
     </div>
 @endif
 
+<a href="{{ route('student.announcements') }}" class="btn btn-primary mt-3">
+    📢 View Announcements
+</a>
+
 
 
 
