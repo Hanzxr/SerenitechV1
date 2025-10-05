@@ -55,7 +55,17 @@ class PostController extends Controller
     // Admin: delete post
     public function destroy(Post $post)
     {
+        // Delete stored files
+        if ($post->image && \Storage::disk('public')->exists($post->image)) {
+            \Storage::disk('public')->delete($post->image);
+        }
+
+        if ($post->video && \Storage::disk('public')->exists($post->video)) {
+            \Storage::disk('public')->delete($post->video);
+        }
+
         $post->delete();
+
         return redirect()->route('admin.posts.index')->with('success', 'Announcement deleted successfully!');
     }
 
