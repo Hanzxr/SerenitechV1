@@ -18,4 +18,5 @@ class ScheduleController extends Controller
 
         return view('student.schedule.index', compact('bookings'));
     }
+
 }

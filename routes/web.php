@@ -11,23 +11,6 @@ use App\Http\Controllers\Admin\BookingController;
 use App\Http\Controllers\Admin\VideoSessionController;
 use App\Http\Controllers\Student\ScheduleController;
 
-//BY BOK#1
-use App\Http\Controllers\PostController;
-
-Route::middleware(['auth', 'admin'])->group(function () {
-    Route::get('/admin/posts', [PostController::class, 'index'])->name('admin.posts');
-    Route::get('/admin/posts/create', [PostController::class, 'create'])->name('admin.posts.create');
-    Route::post('/admin/posts', [PostController::class, 'store'])->name('admin.posts.store');
-});
-
-Route::middleware(['auth'])->group(function () {
-    Route::get('/announcements', [PostController::class, 'showAnnouncements'])->name('announcements');
-});
-
-
-
-
-
 /*
 |--------------------------------------------------------------------------
 | 🔐 Public Route: Login Page (Root)
@@ -188,14 +171,41 @@ Route::middleware(['auth','role:student'])->group(function() {
     Route::get('/student/video/join/{booking}', [VideoSessionController::class,'join'])->name('video.join');
 });
 
+
+// Student Schedule Management
+// Controller: ScheduleController (App\Http\Controllers\Student\)
+// Views: resources/views/student/schedule/index.blade.php
 Route::middleware(['auth', 'role:student'])->group(function () {
-Route::get('/schedule', [ScheduleController::class, 'index'])
-    ->name('student.schedule.index');
+    Route::get('/schedule', [ScheduleController::class, 'index'])->name('student.schedule.index');
+    Route::put('/student/booking/{id}', [App\Http\Controllers\Student\StudentBookingController::class, 'update'])->name('student.booking.update');
+    Route::delete('/student/booking/{id}',[App\Http\Controllers\Student\StudentBookingController::class, 'cancel'])->name('student.booking.cancel');
+    Route::get('/student/counselor/{id}/schedule/{date}', [App\Http\Controllers\Student\StudentBookingController::class, 'getSchedule']);
 });
 
 // routes/web.php
-Route::get('/student/counselor/{id}/schedule/{date}', [StudentBookingController::class, 'getSchedule']);
+// Admin
+// Controller: BookingController (App\Http\Controllers\Admin\)
+// Views: resources/views/admin/bookings/show.blade.php
+Route::middleware(['auth','role:admin'])->group(function(){
 
+Route::post('/admin/bookings/{id}/reschedule', [BookingController::class,'requestReschedule'])->name('bookings.reschedule');
+Route::post('/admin/bookings/{id}/rebook', [BookingController::class,'rebook'])->name('bookings.rebook');
+Route::get('/admin/schedule/{date}', [BookingController::class, 'getSchedule']);
+
+});
+
+// Student
+Route::middleware(['auth','role:student'])->group(function(){
+Route::post('/student/bookings/{id}/reschedule/accept', [StudentBookingController::class,'acceptReschedule'])->name('student.reschedule.accept');
+Route::post('/student/bookings/{id}/reschedule/decline', [StudentBookingController::class,'declineReschedule'])->name('student.reschedule.decline');
+});
+
+// Student reschedule flow
+Route::middleware(['auth', 'role:student'])->prefix('student')->name('student.')->group(function () {
+    Route::post('/booking/{id}/reschedule/accept', [StudentBookingController::class, 'acceptReschedule'])->name('reschedule.accept');
+    Route::post('/booking/{id}/reschedule/decline', [StudentBookingController::class, 'declineReschedule'])->name('reschedule.decline');
+    Route::post('/booking/{id}/reschedule/counter', [StudentBookingController::class, 'counterOffer'])->name('reschedule.counter');
+});
 
 /*
 |--------------------------------------------------------------------------

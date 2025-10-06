@@ -84,17 +84,29 @@
 </script>
 @endif
 
-@if ($errors->any())
+@if(session('error'))
 <script>
-    let errorMessages = `{!! implode('\n', $errors->all()) !!}`;
     Swal.fire({
         icon: 'error',
-        title: 'Validation Error',
-        text: errorMessages,
+        title: 'Booking Error',
+        text: '{{ session('error') }}',
         confirmButtonColor: '#dc3545'
     });
 </script>
 @endif
+
+@if ($errors->any())
+<script>
+    let errorMessages = @json($errors->all());
+    Swal.fire({
+        icon: 'error',
+        title: 'Booking Error',
+        html: errorMessages.join('<br>'),
+        confirmButtonColor: '#dc3545'
+    });
+</script>
+@endif
+
 
 </body>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
