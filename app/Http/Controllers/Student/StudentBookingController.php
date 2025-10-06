@@ -7,6 +7,9 @@ use Illuminate\Http\Request;
 use App\Models\User;
 use App\Models\BookingRequest;
 use Illuminate\Support\Facades\Auth;
+use Carbon\Carbon;
+use Illuminate\Http\RedirectResponse;
+
 
 class StudentBookingController extends Controller
 {
@@ -218,43 +221,54 @@ class StudentBookingController extends Controller
             ->with('error', 'You can only cancel pending bookings.');
     }
 
-    public function acceptReschedule($id)
+  /**
+ * Student accepts a reschedule suggested by counselor/admin
+ */
+public function acceptReschedule($id)
 {
     $booking = BookingRequest::where('id', $id)
         ->where('student_id', auth()->id())
+        ->where('reschedule_status', 'requested')
         ->firstOrFail();
 
+    // Apply rescheduled time
     $booking->preferred_time = $booking->rescheduled_time;
     $booking->rescheduled_time = null;
     $booking->reschedule_status = 'accepted';
+    $booking->reschedule_attempts = 0;
+    $booking->reschedule_reason = null;
     $booking->status = 'approved';
     $booking->save();
 
-    return back()->with('success', 'Reschedule accepted.');
+    return redirect()->route('student.schedule.index')->with('success', 'You accepted the new schedule.');
 }
 
+/**
+ * Student declines the reschedule (must provide reason)
+ */
 public function declineReschedule(Request $request, $id)
 {
     $request->validate([
-        'reason' => 'required|string|max:255'
+        'reason' => 'required|string|max:500',
     ]);
 
     $booking = BookingRequest::where('id', $id)
         ->where('student_id', auth()->id())
+        ->where('reschedule_status', 'requested')
         ->firstOrFail();
 
     $booking->reschedule_status = 'declined';
     $booking->reschedule_reason = $request->reason;
-    $booking->reschedule_attempts += 1;
+    $booking->save();
 
-    if ($booking->reschedule_attempts >= 2) {
+    // If attempts reached >=3 then cancel the booking automatically
+    if ($booking->reschedule_attempts >= 3) {
         $booking->status = 'cancelled';
         $booking->save();
-        return back()->with('error', 'Reschedule declined twice. Booking cancelled.');
+        return redirect()->route('student.schedule.index')->with('error', 'Reschedule declined. This booking has been cancelled after multiple reschedule attempts. Please book again.');
     }
 
-    $booking->save();
-    return back()->with('error', 'Reschedule declined. You can counter-offer.');
+    return redirect()->route('student.schedule.index')->with('error', 'Reschedule declined. The counselor can propose another time.');
 }
 
 public function counterOffer(Request $request, $id)

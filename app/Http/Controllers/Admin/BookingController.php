@@ -7,6 +7,9 @@ use App\Models\BookingRequest;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 class BookingController extends Controller
 {
@@ -95,89 +98,91 @@ class BookingController extends Controller
     }
 
 
-    // Admin initiates reschedule
+   /**
+ * Admin requests a reschedule for a booking.
+ * This sets rescheduled_time, marks reschedule_status=requested and sets booking->status = pending
+ * Admin can re-request while status=requested (it updates rescheduled_time and increments attempt count).
+ */
 public function requestReschedule(Request $request, $id)
 {
     $request->validate([
         'date' => 'required|date',
-        'time' => 'required'
+        'time' => 'required',
     ]);
 
     $booking = BookingRequest::findOrFail($id);
 
-    // can only reschedule pending/approved/rejected
-    if (!in_array($booking->status, ['pending','approved','rejected'])) {
-        return back()->with('error','This booking cannot be rescheduled.');
+    if ($booking->status === 'cancelled') {
+        return back()->with('error', 'Cannot reschedule a cancelled booking.');
     }
 
-    $booking->rescheduled_time = $request->date.' '.$request->time;
+    // Build datetime string
+    $resched = Carbon::parse($request->date . ' ' . $request->time);
+
+    // If already requested, increment attempts (but not beyond 3)
+    if ($booking->reschedule_status === 'requested') {
+        if ($booking->reschedule_attempts >= 2) {
+            // third request would be attempt 3
+            $booking->reschedule_attempts++;
+            // If it reaches 3 attempts, we will mark canceled on next student decline (handled at student side)
+        } else {
+            $booking->reschedule_attempts++;
+        }
+    } else {
+        $booking->reschedule_attempts = 1;
+    }
+
+    $booking->rescheduled_time = $resched;
     $booking->reschedule_status = 'requested';
-    $booking->status = 'pending'; // freeze until student responds
+    // Freeze current status to pending so student must accept or decline
+    $booking->status = 'pending';
     $booking->save();
 
-    return back()->with('success','Reschedule request sent to student.');
+    return back()->with('success', 'Reschedule requested — student will be notified.');
 }
 
-// Student accepts reschedule
-public function acceptReschedule($id)
-{
-    $booking = BookingRequest::where('id',$id)
-                ->where('student_id',auth()->id())
-                ->firstOrFail();
-
-    $booking->preferred_time = $booking->rescheduled_time;
-    $booking->rescheduled_time = null;
-    $booking->reschedule_status = 'accepted';
-    $booking->status = 'approved';
-    $booking->save();
-
-    return back()->with('success','Reschedule accepted.');
-}
-
-// Student declines reschedule
-public function declineReschedule(Request $request, $id)
-{
-    $request->validate([
-        'reason' => 'required|string|max:255'
-    ]);
-
-    $booking = BookingRequest::where('id',$id)
-                ->where('student_id',auth()->id())
-                ->firstOrFail();
-
-    $booking->reschedule_status = 'declined';
-    $booking->reschedule_reason = $request->reason;
-    $booking->save();
-
-    return back()->with('error','Reschedule declined, reason saved.');
-}
-
-// Admin rebooks after rejection
+/**
+ * Admin rebooks (create new booking for that student).
+ * This bypasses event/conflict checks because admin intentionally overrides.
+ */
 public function rebook(Request $request, $id)
 {
     $request->validate([
         'date' => 'required|date',
-        'time' => 'required'
+        'time' => 'required',
     ]);
 
     $oldBooking = BookingRequest::findOrFail($id);
 
-    // only allowed if old was rejected
     if ($oldBooking->status !== 'rejected') {
-        return back()->with('error','Only rejected bookings can be rebooked.');
+        return back()->with('error', 'Only rejected bookings can be rebooked.');
     }
 
-    BookingRequest::create([
+    // Create a new booking for the student with counselor = current admin
+    $preferred = Carbon::parse($request->date . ' ' . $request->time);
+
+    $new = BookingRequest::create([
         'student_id' => $oldBooking->student_id,
         'counselor_id' => auth()->id(),
-        'preferred_time' => $request->date.' '.$request->time,
+        'preferred_time' => $preferred,
         'reason' => $oldBooking->reason,
-        'status' => 'pending'
+        'status' => 'pending',
+        // copy other optional student details if you want:
+        'course' => $oldBooking->course,
+        'age' => $oldBooking->age,
+        'sex' => $oldBooking->sex,
+        'address' => $oldBooking->address,
+        'contact' => $oldBooking->contact,
+        'civil_status' => $oldBooking->civil_status,
+        'emergency_name' => $oldBooking->emergency_name,
+        'emergency_address' => $oldBooking->emergency_address,
+        'emergency_relationship' => $oldBooking->emergency_relationship,
+        'emergency_contact' => $oldBooking->emergency_contact,
+        'emergency_occupation' => $oldBooking->emergency_occupation,
     ]);
 
-    return back()->with('success','Booking rebooked successfully.');
+    return back()->with('success', 'Booking rebooked for student.');
 }
-
 
 // BookingController.php
 public function getSchedule($date)

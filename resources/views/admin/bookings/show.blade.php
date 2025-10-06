@@ -19,45 +19,66 @@
         <div class="alert alert-danger">{{ session('error') }}</div>
     @endif
 
-    {{-- Status Control --}}
-    <div class="mb-3">
-        @if ($booking->status === 'cancelled')
-            <div class="alert alert-secondary">This booking has been cancelled by the student. No further changes allowed.</div>
-        @else
-            <form id="statusForm" method="POST" action="{{ route('bookings.status.update', $booking->id) }}">
-                @csrf
-                <button type="button" data-status="approved" class="btn btn-success status-btn">Approve</button>
-                <button type="button" data-status="rejected" class="btn btn-danger status-btn">Reject</button>
-                <button type="button" data-status="pending" class="btn btn-warning status-btn">Pending</button>
-                <input type="hidden" name="status" id="statusInput">
+  {{-- Status control (replace existing block) --}}
+<div class="mb-3">
+    @if ($booking->status === 'cancelled')
+        <div class="alert alert-secondary">This booking was cancelled by the student. No changes allowed.</div>
+    @else
+        <form id="statusForm" method="POST" action="{{ route('bookings.status.update', $booking->id) }}">
+            @csrf
+            <input type="hidden" name="status" id="statusInput">
+            <button type="button" data-status="approved" class="btn btn-success status-btn">Approve</button>
+            <button type="button" data-status="rejected" class="btn btn-danger status-btn">Reject</button>
+            <button type="button" data-status="pending" class="btn btn-warning status-btn">Pending</button>
+        </form>
 
-                {{-- Reschedule --}}
-@if (!in_array($booking->status, ['cancelled']))
-<div class="mt-3">
-    <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#rescheduleModal">
-        Reschedule
-    </button>
+        {{-- Reschedule modal trigger --}}
+        <div class="mt-3 d-inline-block">
+            <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#rescheduleModal">Reschedule</button>
+        </div>
+
+        {{-- Rebook (for rejected bookings) - admin can create a new booking for the student --}}
+        <div class="mt-3 d-inline-block">
+            <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#rebookModal">Rebook</button>
+        </div>
+    @endif
 </div>
 
-<!-- Modal -->
-<!-- Rebook Modal -->
-<div class="modal fade" id="rebookModal" tabindex="-1">
+<!-- Reschedule Modal -->
+<div class="modal fade" id="rescheduleModal" tabindex="-1">
   <div class="modal-dialog">
-    <form method="POST" action="{{ route('bookings.rebook', $booking->id) }}">
+    <form method="POST" action="{{ route('bookings.reschedule',$booking->id) }}">
         @csrf
         <div class="modal-content">
-            <div class="modal-header"><h5 class="modal-title">Rebook Student</h5></div>
+            <div class="modal-header"><h5 class="modal-title">Reschedule Booking</h5></div>
             <div class="modal-body">
                 <label>Date</label>
                 <input type="date" name="date" class="form-control mb-2" required>
                 <label>Time</label>
                 <input type="time" name="time" class="form-control mb-2" required>
-                <div class="mt-3">
-    <h6>📅 My Schedule on selected date</h6>
-    <ul id="admin-schedule-list" class="list-group small mb-3"></ul>
+                <small class="text-muted">This will send a reschedule request to the student (they must accept/decline).</small>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary">Send Request</button>
+            </div>
+        </div>
+    </form>
+  </div>
 </div>
-                <label>Reason (optional)</label>
-                <textarea name="reason" class="form-control mb-2"></textarea>
+
+<!-- Rebook Modal -->
+<div class="modal fade" id="rebookModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form method="POST" action="{{ route('bookings.rebook',$booking->id) }}">
+        @csrf
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Rebook (create new request for student)</h5></div>
+            <div class="modal-body">
+                <label>Date</label>
+                <input type="date" name="date" class="form-control mb-2" required>
+                <label>Time</label>
+                <input type="time" name="time" class="form-control mb-2" required>
+                <small class="text-muted">Admin rebook will create a new booking (status = pending). This overrides schedule conflicts.</small>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-primary">Rebook</button>
@@ -67,15 +88,8 @@
   </div>
 </div>
 
-<button class="btn btn-outline-secondary mt-2" data-bs-toggle="modal" data-bs-target="#rebookModal">
-    Rebook
-</button>
 
-@endif
 
-            </form>
-        @endif
-    </div>
 
     {{-- Current Booking --}}
     <h5>Current Booking</h5>
@@ -189,31 +203,27 @@ document.querySelectorAll('.status-btn').forEach(btn => {
     });
 });
 </script>
-{{-- Fetch and display admin's schedule on selected date --}}
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-    let dateInput = document.querySelector('#rescheduleModal input[name="date"], #rebookModal input[name="date"]');
-    let scheduleList = document.getElementById('admin-schedule-list');
 
-    if(dateInput){
-        dateInput.addEventListener('change', function(){
-            let date = this.value;
-            fetch(`/admin/schedule/${date}`)
-                .then(res => res.json())
-                .then(data => {
-                    scheduleList.innerHTML = "";
-                    if (data.length === 0) {
-                        scheduleList.innerHTML = `<li class="list-group-item text-success">✅ Free all day</li>`;
-                        return;
-                    }
-                    data.forEach(ev => {
-                        scheduleList.innerHTML += `<li class="list-group-item">
-                            <strong>${ev.title}</strong><br>${ev.start_time} - ${ev.end_time}
-                        </li>`;
-                    });
-                });
+{{-- JS for status confirmations --}}
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script>
+document.querySelectorAll('.status-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        let status = this.dataset.status;
+        Swal.fire({
+            title: 'Confirm',
+            text: 'Change status to ' + status + '?',
+            icon: 'question',
+            showCancelButton: true
+        }).then(result => {
+            if (result.isConfirmed) {
+                document.getElementById('statusInput').value = status;
+                document.getElementById('statusForm').submit();
+            }
         });
-    }
+    });
 });
 </script>
+
+
 @endsection

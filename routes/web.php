@@ -200,12 +200,6 @@ Route::post('/student/bookings/{id}/reschedule/accept', [StudentBookingControlle
 Route::post('/student/bookings/{id}/reschedule/decline', [StudentBookingController::class,'declineReschedule'])->name('student.reschedule.decline');
 });
 
-// Student reschedule flow
-Route::middleware(['auth', 'role:student'])->prefix('student')->name('student.')->group(function () {
-    Route::post('/booking/{id}/reschedule/accept', [StudentBookingController::class, 'acceptReschedule'])->name('reschedule.accept');
-    Route::post('/booking/{id}/reschedule/decline', [StudentBookingController::class, 'declineReschedule'])->name('reschedule.decline');
-    Route::post('/booking/{id}/reschedule/counter', [StudentBookingController::class, 'counterOffer'])->name('reschedule.counter');
-});
 
 /*
 |--------------------------------------------------------------------------
