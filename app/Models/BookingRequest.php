@@ -27,6 +27,10 @@ class BookingRequest extends Model
     'preference',   // ✅ add this
     'status',
     'preferred_time',
+       'rescheduled_time',
+    'reschedule_status',
+    'reschedule_reason',
+    'reschedule_attempts',
 ];
 
 

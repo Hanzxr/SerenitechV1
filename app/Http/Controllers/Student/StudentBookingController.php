@@ -42,84 +42,108 @@ class StudentBookingController extends Controller
     }
 
     public function store(Request $request)
-    {
-        $request->validate([
-            'course' => 'required',
-            'age' => 'required|integer',
-            'sex' => 'required',
-            'address' => 'required',
-            'contact' => 'required',
-            'civil_status' => 'required',
-            'emergency_name' => 'required',
-            'emergency_address' => 'required',
-            'emergency_relationship' => 'required',
-            'emergency_contact' => 'required',
-            'emergency_occupation' => 'required',
-            'reason' => 'required',
-            'preferred_time' => 'required|date',
-            'preference' => 'required|in:online,face-to-face',
-        ]);
+{
+    $request->validate([
+        'course' => 'required',
+        'age' => 'required|integer',
+        'sex' => 'required',
+        'address' => 'required',
+        'contact' => 'required',
+        'civil_status' => 'required',
+        'emergency_name' => 'required',
+        'emergency_address' => 'required',
+        'emergency_relationship' => 'required',
+        'emergency_contact' => 'required',
+        'emergency_occupation' => 'required',
+        'reason' => 'required',
+        'preferred_time' => 'required|date',
+        'preference' => 'required|in:online,face-to-face',
+    ]);
 
-        // ✅ Prevent double booking
-        $hasBooking = BookingRequest::where('student_id', auth()->id())
-            ->whereIn('status', ['pending','approved'])
-            ->exists();
+    // parse preferred time (Carbon, app timezone)
+    $preferred = Carbon::parse($request->preferred_time);
+    $now = Carbon::now();
 
-        if ($hasBooking) {
-            return redirect()->back()->with('alreadyBooked', true)->withInput();
-        }
-
-        $preferred = \Carbon\Carbon::parse($request->preferred_time);
-        $date = $preferred->toDateString();
-        $time = $preferred->format('H:i:s');
-
-        // 🔹 check conflicts
-        $eventConflict = \App\Models\CalendarEvent::where('user_id', $request->counselor_id)
-            ->whereDate('date', $date)
-            ->where(function ($q) use ($time) {
-                $q->where('start_time', '<=', $time)
-                  ->where('end_time', '>=', $time);
-            })
-            ->exists();
-
-        if ($eventConflict) {
-            return redirect()->back()->with('error', 'This time conflicts with the counselor’s schedule.')->withInput();
-        }
-
-        $dayOfWeek = $preferred->format('l');
-        $recurringConflict = \App\Models\WeeklySchedule::where('user_id', $request->counselor_id)
-            ->where('day_of_week', $dayOfWeek)
-            ->where('start_time', '<=', $time)
-            ->where('end_time', '>=', $time)
-            ->exists();
-
-        if ($recurringConflict) {
-            return redirect()->back()->with('error', 'This time conflicts with the counselor’s recurring schedule.')->withInput();
-        }
-
-        // ✅ Save booking
-        BookingRequest::create([
-            'student_id' => auth()->id(),
-            'counselor_id' => $request->counselor_id,
-            'course' => $request->course,
-            'age' => $request->age,
-            'sex' => $request->sex,
-            'address' => $request->address,
-            'contact' => $request->contact,
-            'civil_status' => $request->civil_status,
-            'emergency_name' => $request->emergency_name,
-            'emergency_address' => $request->emergency_address,
-            'emergency_relationship' => $request->emergency_relationship,
-            'emergency_contact' => $request->emergency_contact,
-            'emergency_occupation' => $request->emergency_occupation,
-            'reason' => $request->reason,
-            'preference' => $request->preference,
-            'preferred_time' => $request->preferred_time,
-            'status' => 'pending',
-        ]);
-
-        return redirect()->route('student.dashboard')->with('success', 'Booking request submitted.');
+    // 1) No booking in the past: disallow preferred_time <= now
+    if ($preferred->lte($now)) {
+        return redirect()->back()
+            ->withErrors(['preferred_time' => 'You cannot book a time in the past. Please choose a future time.'])
+            ->withInput();
     }
+
+    $date = $preferred->toDateString();       // YYYY-MM-DD
+    $time = $preferred->format('H:i:s');      // HH:MM:SS
+
+    // 2) Prevent student double-booking (existing student booking pending/approved)
+    $hasBooking = BookingRequest::where('student_id', auth()->id())
+        ->whereIn('status', ['pending','approved'])
+        ->exists();
+
+    if ($hasBooking) {
+        return redirect()->back()->with('alreadyBooked', true)->withInput();
+    }
+
+    // 3) Check calendar events conflict (allow booking at event end time)
+    $eventConflict = \App\Models\CalendarEvent::where('user_id', $request->counselor_id)
+        ->whereDate('date', $date)
+        ->where(function ($q) use ($time) {
+            // conflict if start_time <= time < end_time OR whole-day (null start_time -> treat as full day)
+            $q->where(function ($sub) use ($time) {
+                $sub->where('start_time', '<=', $time)
+                    ->where('end_time', '>', $time);
+            })->orWhereNull('start_time');
+        })
+        ->exists();
+
+    if ($eventConflict) {
+        return redirect()->back()->withErrors(['preferred_time' => 'This time conflicts with the counselor’s schedule (event/unavailable).'])->withInput();
+    }
+
+    // 4) Check recurring tasks conflict (allow booking at the recurring end time)
+    $dayOfWeek = $preferred->format('l'); // e.g. Monday
+    $recurringConflict = \App\Models\WeeklySchedule::where('user_id', $request->counselor_id)
+        ->where('day_of_week', $dayOfWeek)
+        ->where('start_time', '<=', $time)
+        ->where('end_time', '>', $time)   // strictly greater (so booking at end_time is allowed)
+        ->exists();
+
+    if ($recurringConflict) {
+        return redirect()->back()->withErrors(['preferred_time' => 'This time conflicts with the counselor’s recurring schedule.'])->withInput();
+    }
+
+    // 5) Optional: ensure no identical booking exists (exact duplicate)
+    $existingBooking = BookingRequest::where('counselor_id', $request->counselor_id)
+        ->where('preferred_time', $request->preferred_time)
+        ->whereIn('status', ['pending','approved'])
+        ->exists();
+
+    if ($existingBooking) {
+        return redirect()->back()->withErrors(['preferred_time' => 'This exact time slot is already booked.'])->withInput();
+    }
+
+    // Save booking (unchanged)
+    BookingRequest::create([
+        'student_id' => auth()->id(),
+        'counselor_id' => $request->counselor_id,
+        'course' => $request->course,
+        'age' => $request->age,
+        'sex' => $request->sex,
+        'address' => $request->address,
+        'contact' => $request->contact,
+        'civil_status' => $request->civil_status,
+        'emergency_name' => $request->emergency_name,
+        'emergency_address' => $request->emergency_address,
+        'emergency_relationship' => $request->emergency_relationship,
+        'emergency_contact' => $request->emergency_contact,
+        'emergency_occupation' => $request->emergency_occupation,
+        'reason' => $request->reason,
+        'preference' => $request->preference,
+        'preferred_time' => $request->preferred_time,
+        'status' => 'pending',
+    ]);
+
+    return redirect()->route('student.dashboard')->with('success', 'Booking request submitted.');
+}
 
     public function getSchedule($counselor_id, $date)
     {
@@ -142,133 +166,129 @@ class StudentBookingController extends Controller
             'bookings' => $bookings,
         ]);
     }
+// Student updates their own booking (only if pending)
+   public function update(Request $request, $id)
+{
+    $request->validate([
+        'date' => 'required|date',
+        'time' => 'required',
+        'reason' => 'required|string|max:255',
+    ]);
 
-    public function update(Request $request, $id)
-    {
-        $request->validate([
-            'date' => 'required|date',
-            'time' => 'required',
-            'reason' => 'required|string|max:255',
-        ]);
+    $booking = BookingRequest::where('id', $id)
+        ->where('student_id', auth()->id())
+        ->whereIn('status', ['pending']) // only pending editable
+        ->firstOrFail();
 
-        $booking = BookingRequest::where('id', $id)
-            ->where('student_id', auth()->id())
-            ->where('status', 'pending')
-            ->firstOrFail();
+    $preferred = Carbon::parse($request->date . ' ' . $request->time);
+    $now = Carbon::now();
 
-        $preferred = \Carbon\Carbon::parse($request->date . ' ' . $request->time);
-        $date = $preferred->toDateString();
-        $time = $preferred->format('H:i:s');
-
-        // 🔹 conflict checks
-        $eventConflict = \App\Models\CalendarEvent::where('user_id', $booking->counselor_id)
-            ->whereDate('date', $date)
-            ->where(function ($q) use ($time) {
-                $q->where('start_time', '<=', $time)
-                  ->where('end_time', '>=', $time);
-            })
-            ->exists();
-
-        if ($eventConflict) {
-            return redirect()->back()->withErrors(['preferred_time' => 'This time conflicts with the counselor’s schedule.']);
-        }
-
-        $dayOfWeek = $preferred->format('l');
-        $recurringConflict = \App\Models\WeeklySchedule::where('user_id', $booking->counselor_id)
-            ->where('day_of_week', $dayOfWeek)
-            ->where('start_time', '<=', $time)
-            ->where('end_time', '>=', $time)
-            ->exists();
-
-        if ($recurringConflict) {
-            return redirect()->back()->withErrors(['preferred_time' => 'This time conflicts with the counselor’s recurring schedule.']);
-        }
-
-        $existingBooking = BookingRequest::where('counselor_id', $booking->counselor_id)
-            ->whereDate('preferred_time', $date)
-            ->whereTime('preferred_time', $time)
-            ->whereIn('status', ['pending','approved'])
-            ->where('id', '!=', $booking->id)
-            ->exists();
-
-        if ($existingBooking) {
-            return redirect()->back()->withErrors(['preferred_time' => 'This time slot is already taken.']);
-        }
-
-        // 🔹 Update
-        $booking->preferred_time = $preferred;
-        $booking->reason = $request->reason;
-        $booking->save();
-
-        return redirect()->route('student.schedule.index')->with('success', 'Booking updated successfully.');
+    if ($preferred->lte($now)) {
+        return redirect()->back()->withErrors(['date' => 'You cannot reschedule to a past date/time.'])->withInput();
     }
 
-    public function cancel($id)
-    {
-        $booking = BookingRequest::where('id', $id)
-            ->where('student_id', auth()->id())
-            ->firstOrFail();
+    $date = $preferred->toDateString();
+    $time = $preferred->format('H:i:s');
 
-        // allow cancel only if booking is pending
-        if ($booking->status === 'pending') {
-            $booking->status = 'cancelled';
-            $booking->save();
-            return redirect()->route('student.schedule.index')
-                ->with('success', 'Booking cancelled successfully.');
-        }
+    // check event conflict (allow exact end time)
+    $eventConflict = \App\Models\CalendarEvent::where('user_id', $booking->counselor_id)
+        ->whereDate('date', $date)
+        ->where(function ($q) use ($time) {
+            $q->where(function ($sub) use ($time) {
+                $sub->where('start_time', '<=', $time)
+                    ->where('end_time', '>', $time);
+            })->orWhereNull('start_time');
+        })
+        ->exists();
 
-        return redirect()->route('student.schedule.index')
-            ->with('error', 'You can only cancel pending bookings.');
+    if ($eventConflict) {
+        return redirect()->back()->withErrors(['preferred_time' => 'This time conflicts with the counselor’s schedule.'])->withInput();
     }
+
+    // recurring conflict (allow booking at end_time)
+    $dayOfWeek = $preferred->format('l');
+    $recurringConflict = \App\Models\WeeklySchedule::where('user_id', $booking->counselor_id)
+        ->where('day_of_week', $dayOfWeek)
+        ->where('start_time', '<=', $time)
+        ->where('end_time', '>', $time)
+        ->exists();
+
+    if ($recurringConflict) {
+        return redirect()->back()->withErrors(['preferred_time' => 'This time conflicts with the counselor’s recurring schedule.'])->withInput();
+    }
+
+    // check other bookings (exclude current booking)
+    $existingBooking = BookingRequest::where('counselor_id', $booking->counselor_id)
+        ->where('preferred_time', $preferred)
+        ->whereIn('status', ['pending','approved'])
+        ->where('id', '!=', $booking->id)
+        ->exists();
+
+    if ($existingBooking) {
+        return redirect()->back()->withErrors(['preferred_time' => 'This time slot is already taken.'])->withInput();
+    }
+
+    $booking->preferred_time = $preferred;
+    $booking->reason = $request->reason;
+    $booking->save();
+
+    return redirect()->route('student.schedule.index')->with('success', 'Booking updated successfully.');
+}
 
   /**
  * Student accepts a reschedule suggested by counselor/admin
  */
 public function acceptReschedule($id)
 {
-    $booking = BookingRequest::where('id', $id)
-        ->where('student_id', auth()->id())
-        ->where('reschedule_status', 'requested')
-        ->firstOrFail();
+    $booking = BookingRequest::where('id',$id)
+                ->where('student_id', auth()->id())
+                ->firstOrFail();
 
-    // Apply rescheduled time
+    if ($booking->reschedule_status !== 'requested') {
+        return back()->with('error','No pending reschedule request found for this booking.');
+    }
+
+    // Accept: move rescheduled_time -> preferred_time
     $booking->preferred_time = $booking->rescheduled_time;
     $booking->rescheduled_time = null;
     $booking->reschedule_status = 'accepted';
-    $booking->reschedule_attempts = 0;
-    $booking->reschedule_reason = null;
     $booking->status = 'approved';
+    $booking->reschedule_attempts = 0; // reset attempts on success optionally
     $booking->save();
 
-    return redirect()->route('student.schedule.index')->with('success', 'You accepted the new schedule.');
+    // notify admin/counselor if needed
+
+    return back()->with('success','You accepted the proposed time. Booking approved.');
 }
 
-/**
- * Student declines the reschedule (must provide reason)
- */
 public function declineReschedule(Request $request, $id)
 {
-    $request->validate([
-        'reason' => 'required|string|max:500',
-    ]);
+    $request->validate(['reason' => 'required|string|max:500']);
 
-    $booking = BookingRequest::where('id', $id)
-        ->where('student_id', auth()->id())
-        ->where('reschedule_status', 'requested')
-        ->firstOrFail();
+    $booking = BookingRequest::where('id',$id)
+                ->where('student_id', auth()->id())
+                ->firstOrFail();
 
+    if ($booking->reschedule_status !== 'requested') {
+        return back()->with('error','No pending reschedule to decline.');
+    }
+
+    // increment attempt
+    $booking->reschedule_attempts = $booking->reschedule_attempts + 1;
     $booking->reschedule_status = 'declined';
     $booking->reschedule_reason = $request->reason;
     $booking->save();
 
-    // If attempts reached >=3 then cancel the booking automatically
+    // After 3 declines -> auto-cancel
     if ($booking->reschedule_attempts >= 3) {
         $booking->status = 'cancelled';
         $booking->save();
-        return redirect()->route('student.schedule.index')->with('error', 'Reschedule declined. This booking has been cancelled after multiple reschedule attempts. Please book again.');
+        // notify student (pop-up) that booking is cancelled and needs new booking
+        return back()->with('error','You declined the reschedule 3 times — booking auto-cancelled. Please book again.');
     }
 
-    return redirect()->route('student.schedule.index')->with('error', 'Reschedule declined. The counselor can propose another time.');
+    // notify admin/counselor about decline & reason
+    return back()->with('success','Reschedule declined and reason saved. Counselor can propose again (attempt '.$booking->reschedule_attempts.'/3).');
 }
 
 public function counterOffer(Request $request, $id)

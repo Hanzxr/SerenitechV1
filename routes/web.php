@@ -200,7 +200,7 @@ Route::post('/student/bookings/{id}/reschedule/accept', [StudentBookingControlle
 Route::post('/student/bookings/{id}/reschedule/decline', [StudentBookingController::class,'declineReschedule'])->name('student.reschedule.decline');
 });
 
-
+    
 /*
 |--------------------------------------------------------------------------
 | 📦 Breeze Authentication Routes
